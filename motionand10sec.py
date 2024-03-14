@@ -1,92 +1,117 @@
+# Object detection using a single camera sensor (stable)
+
 import cv2
-import time
-import os
 from ultralytics import YOLO
+import os
 
+def gstreamer_pipeline(
+    capture_width=1920,
+    capture_height=1080,
+    display_width=960,
+    display_height=540,
+    framerate=30,
+    flip_method=0,
+):
+    return (
+        "nvarguscamerasrc ! "
+        "video/x-raw(memory:NVMM), "
+        "width=(int)%d, height=(int)%d, framerate=(fraction)%d/1 ! "
+        "nvvidconv flip-method=%d ! "
+        "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink drop=True"
+        % (
+            capture_width,
+            capture_height,
+            framerate,
+            flip_method,
+            display_width,
+            display_height,
+        )
+    )
 
-# Initialize the camera
-cap = cv2.VideoCapture(0)
+def spc_detect():
+    threshold = 30  # Threshold for detecting motion
+    min_contour_area = 500  
+    prev_frame = None
+    prev_time = time.time()
+    capture_interval = 10  # Capture image every 10 seconds
+    save_dir = "saved_picture"  # Specify the directory to save images
+    window_title = "Smart Cart"
+    video_capture = cv2.VideoCapture(gstreamer_pipeline(), cv2.CAP_GSTREAMER)
+    motion_direction = None
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    if video_capture.isOpened():
+        try:
+            cv2.namedWindow(window_title, cv2.WINDOW_AUTOSIZE)
+            while True:
+                ret, frame = video_capture.read()
 
-# Define motion detection parameters
-threshold = 30  # Threshold for detecting motion
-min_contour_area = 500  # Minimum contour area for motion detection
+                if not ret:
+                    break
 
-# Initialize variables
-prev_frame = None
-prev_time = time.time()
-capture_interval = 10  # Capture image every 10 seconds
-save_dir = "saved_picture"  # Specify the directory to save images
+                # Convert frame to grayscale for motion detection
+                gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                blurred_frame = cv2.GaussianBlur(gray_frame, (21, 21), 0)  # Apply Gaussian blur to reduce noise
 
-# Create the directory if it doesn't exist
-if not os.path.exists(save_dir):
-    os.makedirs(save_dir)
+                if prev_frame is None:
+                    prev_frame = blurred_frame
+                    continue
 
-while True:
-    # Read frame from camera
-    ret, frame = cap.read()
+                # Calculate the absolute difference between the current frame and the previous frame
+                frame_delta = cv2.absdiff(prev_frame, blurred_frame)
+                _, thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)
+                
 
-    # Convert frame to grayscale
-    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    
-    # Blur the frame to reduce noise
-    blurred_frame = cv2.GaussianBlur(gray_frame, (5, 5), 0)
-    
-    if prev_frame is None:
-        prev_frame = blurred_frame
-        continue
-
-    # Calculate absolute difference between current frame and previous frame
-    frame_diff = cv2.absdiff(prev_frame, blurred_frame)
-    
-    # Apply a threshold to the frame difference
-    _, thresh = cv2.threshold(frame_diff, threshold, 255, cv2.THRESH_BINARY)
-    
-    # Find contours in the thresholded image
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Check if any contour meets minimum area requirement
-    for contour in contours:
-        if cv2.contourArea(contour) > min_contour_area:
-            # Motion detected
+                # Find contours of moving objects
+                contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for contour in contours:
+                    if cv2.contourArea(contour) > min_contour_area:
+                        # Motion detected
             
-            image_path = os.path.join(save_dir, f"captured_image_{int(curr_time)}.jpg")
-            cv2.imwrite(image_path, frame)
-            print(f"Motion detected! Image saved to: {image_path}")
-            prev_time = curr_time
+                        image_path = os.path.join(save_dir, f"captured_image_{int(curr_time)}.jpg")
+                        cv2.imwrite(image_path, frame)
+                        print(f"Motion detected! Image saved to: {image_path}")
+                        prev_time = curr_time
 
-            #detect
-            # source=image_path
-            # model = YOLO('best.pt')
-            # model.predict(source=source, save=True, conf=0.5)
-            # os.remove(image_path)
-            #jeda 3 detik
-            
+                        #detect
+                        # source=image_path
+                        # model = YOLO('best.pt')
+                        # model.predict(source=source, save=True, conf=0.5)
+                        # os.remove(image_path)
+                        #jeda 3 detik
 
-    # Update previous frame
-    prev_frame = blurred_frame
+                prev_frame = blurred_frame    
 
-    # Check if it's time to capture image
-    curr_time = time.time()
-    if curr_time - prev_time >= capture_interval:
-        # Save the image to specified directory
-        image_path = os.path.join(save_dir, f"captured_image_{int(curr_time)}.jpg")
-        cv2.imwrite(image_path, frame)
-        print(f"Image saved to: {image_path}")
-        prev_time = curr_time
-        #for detect
-        source=image_path
-        model = YOLO('best.pt')
-        model.predict(source=source, save=True, conf=0.5)
-        # os.remove(image_path)
+                curr_time = time.time()
+
+                if curr_time - prev_time >= capture_interval:
+                    # Save the image to specified directory
+                    image_path = os.path.join(save_dir, f"captured_image_{int(curr_time)}.jpg")
+                    cv2.imwrite(image_path, frame)
+                    print(f"Image saved to: {image_path}")
+                    prev_time = curr_time
+                    #for detect
+                    source=image_path
+                    model = YOLO('best.pt')
+                    model.predict(source=source, save=True, conf=0.5)
+                    # os.remove(image_path)
 
 
-    # Display the frame
-    cv2.imshow("Camera Feed", frame)
+                # Display the frames and motion direction
+                
+                cv2.imshow(window_title, frame)
 
-    # Check for key press to exit
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+                # Exit by pressing 'Q'
+                if cv2.waitKey(1) & 0xFF == ord('q'): 
+                    break
+        finally:
+            video_capture.release()
+            cv2.destroyAllWindows()
+    else:
+        print("Unable to open camera")
 
-# Release the camera and close all windows
-cap.release()
-cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    spc_detect()
